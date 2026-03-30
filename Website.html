@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Cartographie des agences de financement - Recherche</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/1.2.1/sigma.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/1.2.1/plugins/sigma.renderers.customShapes.min.js"></script>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #0d1117; color: #c9d1d9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #container { position: absolute; width: 100%; height: 100%; }
+        #sidebar { 
+            position: absolute; left: 20px; top: 20px; width: 300px; bottom: 20px;
+            background: rgba(22, 27, 34, 0.9); padding: 25px; 
+            border: 1px solid #30363d; border-radius: 12px; z-index: 10;
+            overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        h2 { color: #58a6ff; font-size: 1.4em; margin-top: 0; border-bottom: 1px solid #30363d; padding-bottom: 10px; }
+        .section { margin-bottom: 20px; }
+        .label { font-size: 0.7em; text-transform: uppercase; color: #8b949e; letter-spacing: 1px; font-weight: bold; }
+        .content { margin-top: 5px; line-height: 1.5; font-size: 0.95em; }
+        a { color: #58a6ff; text-decoration: none; word-break: break-all; }
+        a:hover { text-decoration: underline; }
+        .hint { background: #23863633; color: #3fb950; padding: 10px; border-radius: 6px; font-size: 0.85em; margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <h2 id="node-name">Explorateur</h2>
+        <div class="section">
+            <div class="label">Description</div>
+            <div id="node-desc" class="content">Cliquez sur un cercle (Institution) ou un carré (Personne) pour commencer.</div>
+        </div>
+        <div class="section" id="sec-contact" style="display:none;">
+            <div class="label">Contact</div>
+            <div id="node-contact" class="content"></div>
+        </div>
+        <div class="section" id="sec-legal" style="display:none;">
+            <div class="label">Cadre Légal</div>
+            <div id="node-legal" class="content"></div>
+        </div>
+        <div class="hint">💡 Cliquez sur les institutions pour déployer les sous-comités et les membres.</div>
+    </div>
+
+    <div id="container"></div>
+
+    <script>
+    fetch('data.json').then(res => res.json()).then(raw => {
+        const data = raw.graph;
+        const nodes = [];
+        const edges = [];
+
+        // 1. DATA PARSING
+        for (let i = 0; i < data.nodesNumber; i++) {
+            const id = i.toString();
+            const props = data.properties;
+            
+            // Get Layout
+            const coords = (props.viewLayout.nodesValues[id] || "(0,0,0)").replace(/[() ]/g, '').split(',');
+            // Get Color
+            const rgba = (props.viewColor.nodesValues[id] || "(200,200,200,255)").replace(/[() ]/g, '').split(',');
+            const hex = "#" + ((1 << 24) + (parseInt(rgba[0]) << 16) + (parseInt(rgba[1]) << 8) + parseInt(rgba[2])).toString(16).slice(1);
+            
+            // SHAPE LOGIC: Tulip 4 = Square, 2 = Sphere/Circle
+            const shapeVal = props.viewShape.nodesValues[id];
+            const finalShape = (shapeVal === "4") ? "square" : "circle";
+
+            nodes.push({
+                id: id,
+                label: props.viewLabel.nodesValues[id] || id,
+                x: parseFloat(coords[0]),
+                y: -parseFloat(coords[1]),
+                size: parseFloat((props.viewSize.nodesValues[id] || "(3,3,3)").split(',')[0].replace('(', '')),
+                color: hex,
+                type: finalShape, // Use the custom renderer
+                // Metadata
+                description: props.description.nodesValues[id] || "",
+                contact: props.contact.nodesValues[id] || "",
+                cadre_legal: props.cadre_legal.nodesValues[id] || "",
+                groupId: props.groupId.nodesValues[id] || ""
+            });
+        }
+
+        // EDGES
+        data.edges.forEach((e, i) => {
+            edges.push({ id: 'e' + i, source: e[0].toString(), target: e[1].toString(), color: '#30363d' });
+        });
+
+        // 2. SIGMA INITIALIZATION
+        const s = new sigma({
+            graph: { nodes, edges },
+            container: 'container',
+            settings: { 
+                labelThreshold: 0, 
+                defaultLabelColor: '#fff',
+                minNodeSize: 5,
+                maxNodeSize: 15
+            }
+        });
+
+        // Initial State: Hide anything that is a "Child"
+        s.graph.nodes().forEach(n => {
+            if (n.groupId.includes("_Child")) n.hidden = true;
+        });
+        s.refresh();
+
+        // 3. INTERACTION
+        s.bind('clickNode', function(e) {
+            const n = e.data.node;
+            const groups = n.groupId ? n.groupId.split('|') : [];
+
+            // RECURSIVE TOGGLE
+            groups.forEach(group => {
+                if (group.endsWith("_Parent")) {
+                    const prefix = group.split('_')[0];
+                    const targetChild = prefix + "_Child";
+
+                    s.graph.nodes().forEach(node => {
+                        if (node.groupId.includes(targetChild)) {
+                            node.hidden = !node.hidden;
+                        }
+                    });
+                }
+            });
+            s.refresh();
+
+            // SIDEBAR CONTENT
+            document.getElementById('node-name').innerText = n.label;
+            document.getElementById('node-desc').innerHTML = formatLinks(n.description);
+            
+            updateSection('sec-contact', 'node-contact', n.contact);
+            updateSection('sec-legal', 'node-legal', n.cadre_legal);
+        });
+
+        function formatLinks(text) {
+            if (!text) return "";
+            // Regex to find URLs and make them clickable
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+            return text.replace(urlRegex, function(url) {
+                return '<a href="' + url + '" target="_blank">' + url + '</a>';
+            });
+        }
+
+        function updateSection(secId, textId, val) {
+            const sec = document.getElementById(secId);
+            if (val && val !== "") {
+                sec.style.display = "block";
+                document.getElementById(textId).innerHTML = formatLinks(val);
+            } else {
+                sec.style.display = "none";
+            }
+        }
+    });
+    </script>
+</body>
+</html>
