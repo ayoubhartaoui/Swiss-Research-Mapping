@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Cartographie des agences de financement - Recherche</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/1.2.1/sigma.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/1.2.1/plugins/sigma.renderers.customShapes.min.js"></script>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #0d1117; color: #c9d1d9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #container { position: absolute; width: 100%; height: 100%; }
+        #sidebar { 
+            position: absolute; left: 20px; top: 20px; width: 300px; bottom: 20px;
+            background: rgba(22, 27, 34, 0.9); padding: 25px; 
+            border: 1px solid #30363d; border-radius: 12px; z-index: 10;
+            overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        h2 { color: #58a6ff; font-size: 1.4em; margin-top: 0; border-bottom: 1px solid #30363d; padding-bottom: 10px; }
+        .section { margin-bottom: 20px; }
+        .label { font-size: 0.7em; text-transform: uppercase; color: #8b949e; letter-spacing: 1px; font-weight: bold; }
+        .content { margin-top: 5px; line-height: 1.5; font-size: 0.95em; }
+        a { color: #58a6ff; text-decoration: none; word-break: break-all; }
+        a:hover { text-decoration: underline; }
+        .hint { background: #23863633; color: #3fb950; padding: 10px; border-radius: 6px; font-size: 0.85em; margin-top: 20px; }
+        #lang-btn { cursor:pointer; background:#30363d; color:white; border:1px solid #58a6ff; border-radius:4px; padding:5px 10px; transition: 0.3s; }
+        #lang-btn:hover { background: #58a6ff; color: #0d1117; }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div style="text-align: right; margin-bottom: 10px;">
+            <button onclick="toggleLanguage()" id="lang-btn">EN</button>
+        </div>
+        <h2 id="sidebar-title">Explorateur</h2>
+        <div class="section">
+            <div id="sidebar-desc-label" class="label">Description</div>
+            <div id="node-desc" class="content">Cliquez sur un cercle ou un carré pour commencer.</div>
+        </div>
+        <div class="section" id="sec-contact" style="display:none;">
+            <div id="sidebar-contact-label" class="label">Contact</div>
+            <div id="node-contact" class="content"></div>
+        </div>
+        <div class="section" id="sec-legal" style="display:none;">
+            <div id="sidebar-legal-label" class="label">Cadre Légal</div>
+            <div id="node-legal" class="content"></div>
+        </div>
+        <div id="sidebar-hint" class="hint">💡 Cliquez sur les institutions pour déployer les sous-comités.</div>
+    </div>
+
+    <div id="container"></div>
+
+    <script>
+    let s; 
+    let currentLang = 'FR';
+    let selectedNode = null;
+
+    const translations = {
+        'FR': { 'title': 'Explorateur', 'desc_label': 'Description', 'contact_label': 'Contact', 'legal_label': 'Cadre Légal', 'hint': '💡 Cliquez sur les institutions pour déployer les sous-comités.', 'welcome': 'Cliquez sur un cercle ou un carré pour commencer.', 'btn': 'EN' },
+        'EN': { 'title': 'Explorer', 'desc_label': 'Description', 'contact_label': 'Contact', 'legal_label': 'Legal Framework', 'hint': '💡 Click on institutions to expand sub-committees.', 'welcome': 'Click on a circle or a square to start.', 'btn': 'FR' }
+    };
+
+    function toggleLanguage() {
+        currentLang = (currentLang === 'FR') ? 'EN' : 'FR';
+        const t = translations[currentLang];
+        document.getElementById('lang-btn').innerText = t.btn;
+        document.getElementById('sidebar-desc-label').innerText = t.desc_label;
+        document.getElementById('sidebar-contact-label').innerText = t.contact_label;
+        document.getElementById('sidebar-legal-label').innerText = t.legal_label;
+        document.getElementById('sidebar-hint').innerHTML = t.hint;
+        if (!selectedNode) {
+            document.getElementById('sidebar-title').innerText = t.title;
+            document.getElementById('node-desc').innerText = t.welcome;
+        } else { updateSidebar(selectedNode); }
+        s.graph.nodes().forEach(n => { n.label = (currentLang === 'FR') ? n.label_fr : n.label_en; });
+        s.refresh();
+    }
+
+    fetch('data.json').then(res => res.json()).then(raw => {
+        const data = raw.graph;
+        const nodes = [];
+        const edges = [];
+        const props = data.properties;
+        const nodeIds = Object.keys(props.viewLabel.nodesValues);
+
+        nodeIds.forEach(id => {
+            const coordsStr = (props.viewLayout && props.viewLayout.nodesValues[id]) ? props.viewLayout.nodesValues[id] : "(0,0,0)";
+            const coords = coordsStr.replace(/[() ]/g, '').split(',');
+            const rgbaStr = (props.viewColor && props.viewColor.nodesValues[id]) ? props.viewColor.nodesValues[id] : "(200,200,200,255)";
+            const rgba = rgbaStr.replace(/[() ]/g, '').split(',');
+            const hex = "#" + ((1 << 24) + (parseInt(rgba[0]) << 16) + (parseInt(rgba[1]) << 8) + parseInt(rgba[2])).toString(16).slice(1);
+            const sizeStr = (props.viewSize && props.viewSize.nodesValues[id]) ? props.viewSize.nodesValues[id] : "(3,3,3)";
+
+            nodes.push({
+                id: id,
+                label_fr: props.viewLabel.nodesValues[id] || "",
+                label_en: (props.label_en && props.label_en.nodesValues[id]) ? props.label_en.nodesValues[id] : props.viewLabel.nodesValues[id],
+                label: props.viewLabel.nodesValues[id], 
+                x: parseFloat(coords[0] || 0),
+                y: -parseFloat(coords[1] || 0),
+                size: parseFloat(sizeStr.split(',')[0].replace('(', '') || 3),
+                color: hex,
+                type: (props.viewShape && props.viewShape.nodesValues[id] === "4") ? "square" : "circle",
+                description_fr: (props.description && props.description.nodesValues[id]) ? props.description.nodesValues[id] : "",
+                description_en: (props.desc_en && props.desc_en.nodesValues[id]) ? props.desc_en.nodesValues[id] : "",
+                contact: (props.contact && props.contact.nodesValues[id]) ? props.contact.nodesValues[id] : "",
+                cadre_legal: (props.cadre_legal && props.cadre_legal.nodesValues[id]) ? props.cadre_legal.nodesValues[id] : "",
+                groupId: (props.groupId && props.groupId.nodesValues[id]) ? props.groupId.nodesValues[id] : ""
+            });
+        });
+
+        data.edges.forEach((e, i) => {
+            edges.push({ id: 'e' + i, source: e[0].toString(), target: e[1].toString(), color: '#30363d' });
+        });
+
+        s = new sigma({
+            graph: { nodes, edges },
+            container: 'container',
+            settings: { labelThreshold: 0, defaultLabelColor: '#fff', minNodeSize: 2, maxNodeSize: 15, scalingMode: 'outside', defaultEdgeType: 'curve' }
+        });
+
+        s.graph.nodes().forEach(n => { if (n.groupId.includes("_Child")) n.hidden = true; });
+        s.refresh();
+
+        s.bind('clickNode', function(e) {
+            selectedNode = e.data.node;
+            const groups = selectedNode.groupId ? selectedNode.groupId.split('|') : [];
+            groups.forEach(group => {
+                if (group.endsWith("_Parent")) {
+                    const targetChild = group.split('_')[0] + "_Child";
+                    s.graph.nodes().forEach(node => { if (node.groupId.includes(targetChild)) node.hidden = !node.hidden; });
+                }
+            });
+            updateSidebar(selectedNode);
+            s.refresh();
+        });
+    });
+
+    function updateSidebar(n) {
+        document.getElementById('sidebar-title').innerText = (currentLang === 'FR') ? n.label_fr : n.label_en;
+        document.getElementById('node-desc').innerHTML = formatLinks((currentLang === 'FR') ? n.description_fr : n.description_en);
+        updateSection('sec-contact', 'node-contact', n.contact);
+        updateSection('sec-legal', 'node-legal', n.cadre_legal);
+    }
+
+    function formatLinks(text) {
+        return text ? text.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank">$1</a>') : "";
+    }
+
+    function updateSection(secId, textId, val) {
+        const sec = document.getElementById(secId);
+        if (val) { sec.style.display = "block"; document.getElementById(textId).innerHTML = formatLinks(val); }
+        else { sec.style.display = "none"; }
+    }
+    </script>
+</body>
+</html>
